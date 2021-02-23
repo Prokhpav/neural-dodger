@@ -2,12 +2,18 @@ package run
 
 import (
 	"github.com/faiface/pixel"
-	"github.com/faiface/pixel/pixelgl"
 	"math"
 	"math/rand"
 )
 
-// game classes
+const (
+	RayCount = InpCount
+)
+
+var (
+	MaxSpeed       = 450.
+	CarSpawnChance = 0.05
+)
 
 func AddUpDraw(obj interface {
 	Update()
@@ -27,6 +33,7 @@ func AddRect(rect *Rect) {
 
 type DistRay struct {
 	Ray
+	C    pixel.RGBA
 	dist float64
 }
 
@@ -43,7 +50,7 @@ func (ray DistRay) Draw() {
 		dist = -dist
 	}
 	x := dist / math.Sqrt(ray.K*ray.K+1)
-	Draw.Segment(ray.X, ray.Y, ray.X+x, ray.Y+ray.K*x, 4, pixel.RGB(0.5, 0.5, 0))
+	Draw.Segment(ray.X, ray.Y, ray.X+x, ray.Y+ray.K*x, 1, ray.C)
 }
 
 type Car struct {
@@ -53,7 +60,7 @@ type Car struct {
 
 func (c *Car) Update() {
 	c.Y -= c.speed / 30
-	if c.Y+c.H < 10 {
+	if c.Y+c.H < 0 {
 		for i, r := range Rects {
 			if *r == c.Rect {
 				Rects = append(Rects[:i], Rects[i+1:]...)
@@ -66,38 +73,40 @@ func (c *Car) Update() {
 
 type carManager struct{}
 
-var CarManager = carManager{}
-
 func (m *carManager) Update() {
-	if rand.Float64() < 0.05 {
-		w := 50.
+	if rand.Float64() < CarSpawnChance {
+		w := 30 + rand.Float64()*30
 		c := &Car{
 			Rect: Rect{
 				X: rand.Float64() * (Draw.W - w),
 				Y: Draw.H,
 				W: w,
-				H: 80,
-				C: pixel.RGB(0.5, 0.7, 0),
+				H: 60 + rand.Float64()*60,
+				C: HsvToRgb(-0.1+rand.Float64()*0.2, 1, 0.5),
 			},
-			speed: 100 + rand.Float64()*100,
+			speed: 150 + rand.Float64()*150,
 		}
 		AddRect(&c.Rect)
-		AddUpDraw(c, true, false)
+		AddUpDraw(c, true, true)
 	}
 }
 
 type Player struct {
 	Rect
-	Rays      []*DistRay
+	Rays      [RayCount]*DistRay
 	DeathTime float64
+	//Net *Network
+	NetIndex int
 }
 
 func (p *Player) Init() {
-	for r := 0.; r <= 1.001; r += 0.01 {
-		a := math.Pi * 2 * (0.49 + (r+math.Sin(r*2*math.Pi)/4/math.Pi)*0.52)
-		ray := DistRay{GetRayA(pixel.V(p.X+p.W/2, p.Y+p.H/2), a), 10}
-		p.Rays = append(p.Rays, &ray)
-		Drawers = append(Drawers, &ray)
+	r := 0.
+	for i := 0; i < RayCount; i++ {
+		a := math.Pi * 2 * (0.5 + (r+math.Sin(r*2*math.Pi)/4/math.Pi)*0.5)
+		ray := DistRay{Ray: GetRayA(pixel.V(p.X+p.W/2, p.Y), a), C: p.C.Scaled(0.1)}
+		p.Rays[i] = &ray
+		r += 1. / (RayCount - 1)
+		AddUpDraw(&ray, false, true)
 	}
 }
 
@@ -110,17 +119,19 @@ func (p Player) Draw() {
 }
 
 func (p *Player) Update() {
-	if Draw.Win.Pressed(pixelgl.KeyA) {
-		p.X -= 200. / 30
-	}
-	if Draw.Win.Pressed(pixelgl.KeyD) {
-		p.X += 200. / 30
-	}
-	for _, ray := range p.Rays {
+	distances := [RayCount]float64{}
+	for i, ray := range p.Rays {
 		ray.X = p.X + p.W/2
-		ray.dist = ray.RectsMinDist(Rects)
+		ray.Update()
+		distances[i] = ray.dist / 100.
 	}
+	g := AllNetworks[p.NetIndex].Get(distances)[0]
+	//if p.NetIndex == 0 {
+	//	fmt.Println(g, distances)
+	//}
+	p.X += MaxSpeed * (g*2 - 1) / 30.
 	if p.DeathTime < 0 {
+		AllNetworks[p.NetIndex].Fitness += 1. / 30
 		for _, r := range Rects {
 			if p.Rect.IsCollideRect(*r) {
 				p.OnDeath()
@@ -134,11 +145,18 @@ func (p *Player) Update() {
 }
 
 func (p *Player) OnDeath() {
-	p.X = (Draw.W - p.W) / 2
+	//outOfBounds := p.X < 0 || p.X + p.W > Draw.W
+	p.X = -p.W/2 + Draw.W/2 + (rand.Float64()*2-1)*Draw.W/3
 	p.DeathTime = 2
-	for i := 0; i < len(Rects); i++ {
-		if p.Rect.IsCollideRect(*Rects[i]) {
-			Rects[i].X = -100 - Rects[i].W
-		}
-	}
+	//for i := 0; i < len(Rects); i++ {
+	//	if p.Rect.IsCollideRect(*Rects[i]) {
+	//		Rects[i].X = -100 - Rects[i].W
+	//	}
+	//}
+	AllNetworks[p.NetIndex] = NewNetwork()
+	//if outOfBounds {
+	//	AllNetworks[p.NetIndex].Fitness = -1000
+	//} else {
+	AllNetworks[p.NetIndex].Fitness = 0
+	//}
 }

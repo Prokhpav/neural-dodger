@@ -9,7 +9,7 @@ import (
 )
 
 //                    Window size
-var Draw = drawVars{W: 800, H: 600}
+var Draw = drawVars{W: 1200, H: 900}
 
 type drawVars struct {
 	W, H  float64
